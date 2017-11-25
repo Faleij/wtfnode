@@ -297,7 +297,16 @@ function getCallsite(thing) {
 };
 
 function dump() {
-    console.log('[WTF Node?] open handles:');
+    var out = {
+        sockets: [],
+        fds: [],
+        servers: [],
+        timers: [],
+        intervals: [],
+        processes: [],
+        clusterWorkers: [],
+        other: [],
+    };
 
     // sort the active handles into different types for logging
     var sockets = [ ], fds = [ ], servers = [ ], _timers = [ ], processes = [ ], clusterWorkers = [ ], other = [ ];
@@ -324,19 +333,29 @@ function dump() {
     if (fds.length) {
         console.log('- File descriptors: (note: stdio always exists)');
         fds.forEach(function (s) {
+            if (s._isStdio) return;
+
             var str = '  - fd '+s.fd;
+            var entry = {
+                fd: s.fd,
+                isTTY: s.isTTY,
+                isStdio: s._isStdio,
+                destroyed: s.destroyed,
+            };
+
             if (s.isTTY) { str += ' (tty)'; }
             if (s._isStdio) { str += ' (stdio)'; }
             if (s.destroyed) { str += ' (destroyed)'; }
-            console.log(str);
 
             // this event will source the origin of a readline instance, kind of indirectly
             var keypressListeners = s.listeners('keypress');
             if (keypressListeners && keypressListeners.length) {
-                console.log('    - Listeners:');
-                keypressListeners.forEach(function (fn) {
+                entry.keypressListeners = keypressListeners.map(function (fn) {
                     var callSite = getCallsite(fn);
-                    console.log('      - %s: %s @ %s:%d', 'keypress', fn.name || '(anonymous)', callSite.file, callSite.line);
+                    return {
+                        name: fn.name || '(anonymous)',
+                        callSite: callSite,
+                    };
                 });
             }
         });
@@ -352,13 +371,13 @@ function dump() {
     });
 
     if (processes.length) {
-        console.log('- Child processes');
-        processes.forEach(function (cp) {
+        out.processes = processes.map(function (cp) {
             var fds = [ ];
-            console.log('  - PID %s', cp.pid);
+            var entry = {
+                pid: cp.pid,
+            };
             if (!DONT_INSTRUMENT['ChildProcess']) {
-                var callSite = getCallsite(cp);
-                console.log('    - Entry point: %s:%d', callSite.file, callSite.line);
+                entry.callSite = getCallsite(cp);
             }
             if (cp.stdio && cp.stdio.length) {
                 cp.stdio.forEach(function (s) {
@@ -369,48 +388,50 @@ function dump() {
                     }
                 });
                 if (fds && fds.length) {
-                    console.log('    - STDIO file descriptors:', fds.join(', '));
+                    entry.fds = fds;
                 }
             }
+            return entry;
         });
     }
 
     if (clusterWorkers.length) {
-        console.log('- Cluster workers');
-        clusterWorkers.forEach(function (cw) {
-            var fds = [ ], cp = cw.__worker.process;
-            console.log('  - PID %s', cp.pid);
-            var callSite = getCallsite(cw);
-            console.log('    - Entry point: %s:%d', callSite.file, callSite.line);
+        out.clusterWorkers = clusterWorkers.map(function (cw) {
+            return {
+                pid: cw.__worker.process.pid,
+                callSite: getCallsite(cw),
+            };
         });
     }
 
     if (sockets.length) {
-        console.log('- Sockets:');
-        sockets.forEach(function (s) {
-            if (s.destroyed) {
-                console.log('  - (?:?) -> %s:? (destroyed)', s._host);
-            } else if (s.localAddress) {
-                console.log('  - %s:%s -> %s:%s', s.localAddress, s.localPort, s.remoteAddress, s.remotePort);
-            } else if (s._handle && (s._handle.fd != null)) {
-                console.log('  - fd %s', s._handle.fd);
-            } else {
-                console.log('  - unknown socket');
-            }
+        out.sockets = sockets.map(function (s) {
+            var entry = {
+                localAddress: s.localAddress,
+                localPort: s.localPort,
+                remoteAddress: s.remoteAddress,
+                remotePort: s.remotePort,
+                destroyed: s.destroyed,
+                fd: s._handle.fs,
+            };
+
             var connectListeners = s.listeners('connect');
             if (connectListeners && connectListeners.length) {
-                console.log('    - Listeners:');
-                connectListeners.forEach(function (fn) {
+                entry.connectListeners = connectListeners.map(function (fn) {
                     var callSite = getCallsite(fn);
-                    console.log('      - %s: %s @ %s:%d', 'connect', fn.name || '(anonymous)', callSite.file, callSite.line);
+                    return {
+                        name: fn.name || '(anonymous)',
+                        callSite: callSite,
+                    };
                 });
             }
+
+            return entry;
         });
     }
 
     if (servers.length) {
-        console.log('- Servers:');
-        servers.forEach(function (s) {
+        out.servers = servers.map(function (s) {
             var type = 'unknown type';
             if (s instanceof HttpServer) { type = 'HTTP'; }
             else if (s instanceof HttpsServer) { type = 'HTTPS'; }
@@ -428,12 +449,6 @@ function dump() {
                 throw e;
             }
 
-            if (a) {
-                console.log('  - %s:%s (%s)', a.address, a.port, type);
-            } else {
-                console.log('  - <unknown address>'); // closed / race condition?
-            }
-
             var eventType = (
               type === 'HTTP' || type === 'HTTPS' ? 'request' :
               type === 'TCP' || type === 'TLS' ? 'connection' :
@@ -443,13 +458,22 @@ function dump() {
 
             var listeners = s.listeners(eventType);
 
+            var entry = {
+                address: a && a.address,
+                port: a && a.port,
+                type: type,
+                eventType: eventType,
+            };
             if (listeners && listeners.length) {
-                console.log('    - Listeners:');
-                listeners.forEach(function (fn) {
-                    var callSite = getCallsite(fn);
-                    console.log('      - %s: %s @ %s:%d', eventType, fn.__name || fn.name || '(anonymous)', callSite.file, callSite.line);
+                entry.listeners = listeners.forEach(function (fn) {
+                    return {
+                        name: fn.__name || fn.name || '(anonymous)',
+                        callSite: getCallsite(fn),
+                    };
                 });
             }
+
+            return entry;
         });
     }
 
@@ -494,41 +518,35 @@ function dump() {
     });
 
     if (timers.length) {
-        console.log('- Timers:');
-
-        timers.forEach(function (t) {
+        out.timers = timers.map(function (t) {
             var fn = t[timerCallback(t)],
                 callSite = getCallsite(fn);
-            if (fn.__name) {
-                console.log('  - (%d ~ %s) %s @ %s:%d', t._idleTimeout, formatTime(t._idleTimeout), fn.__name, callSite.file, callSite.line);
-            } else {
-                console.log('  - (%d ~ %s) %s @ %s:%d', t._idleTimeout, formatTime(t._idleTimeout), fn.name, callSite.file, callSite.line);
-            }
+
+            return {
+                name: fn.name || fn.__name || '(anonymous)',
+                timeout: t._idleTimeout,
+                callSite: callSite,
+            };
         });
     }
 
     if (intervals.length) {
-        console.log('- Intervals:');
-
-        intervals.forEach(function (t) {
+        out.intervals = intervals.forEach(function (t) {
             var fn = t[timerCallback(t)],
                 callSite = getCallsite(fn);
-            if (fn.__name) {
-                console.log('  - (%d ~ %s) %s @ %s:%d', t._idleTimeout, formatTime(t._idleTimeout), fn.__name, callSite.file, callSite.line);
-            } else {
-                console.log('  - (%d ~ %s) %s @ %s:%d', t._idleTimeout, formatTime(t._idleTimeout), fn.name, callSite.file, callSite.line);
-            }
+            return {
+                name: fn.name || fn.__name || '(anonymous)',
+                timeout: t._idleTimeout,
+                callSite: callSite,
+            };
         });
     }
 
     if (other.length) {
-        console.log('- Others:');
-        other.forEach(function (o) {
-            if (!o) { return; }
-            if (o.constructor) { console.log('  - %s', o.constructor.name); }
-            else { console.log('  - %s', o); }
-        });
+        out.other = other.filter(v => !!v);
     }
+
+    return out;
 }
 
 function init() {
