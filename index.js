@@ -65,7 +65,6 @@ function timerCallback(thing) {
     // this will probably screw up any code that depends on the callbacks having
     // a 'name' or 'length' property that is accurate, but there doesn't appear
     // to be a way around that :(
-    var consolelog = console.log.bind(console);
     function wrapFn(fn, name, isInterval, callback) {
         if (typeof fn !== 'function') { return fn; }
 
@@ -291,7 +290,7 @@ function getCallsite(thing) {
         if (!DONT_INSTRUMENT[name]) {
             console.warn('Unable to determine callsite for "'+name+'". Did you require `wtfnode` at the top of your entry point?');
         }
-        return { file: 'unknown', line: 0 };
+        return undefined;
     }
     return thing.__callSite;
 };
@@ -331,7 +330,6 @@ function dump() {
     });
 
     if (fds.length) {
-        console.log('- File descriptors: (note: stdio always exists)');
         fds.forEach(function (s) {
             if (s._isStdio) return;
 
@@ -351,10 +349,9 @@ function dump() {
             var keypressListeners = s.listeners('keypress');
             if (keypressListeners && keypressListeners.length) {
                 entry.keypressListeners = keypressListeners.map(function (fn) {
-                    var callSite = getCallsite(fn);
                     return {
                         name: fn.name || '(anonymous)',
-                        callSite: callSite,
+                        callSite: getCallsite(fn),
                     };
                 });
             }
@@ -418,10 +415,9 @@ function dump() {
             var connectListeners = s.listeners('connect');
             if (connectListeners && connectListeners.length) {
                 entry.connectListeners = connectListeners.map(function (fn) {
-                    var callSite = getCallsite(fn);
                     return {
                         name: fn.name || '(anonymous)',
-                        callSite: callSite,
+                        callSite: getCallsite(fn),
                     };
                 });
             }
@@ -519,25 +515,22 @@ function dump() {
 
     if (timers.length) {
         out.timers = timers.map(function (t) {
-            var fn = t[timerCallback(t)],
-                callSite = getCallsite(fn);
-
+            var fn = t[timerCallback(t)];
             return {
                 name: fn.name || fn.__name || '(anonymous)',
                 timeout: t._idleTimeout,
-                callSite: callSite,
+                callSite: getCallsite(fn),
             };
         });
     }
 
     if (intervals.length) {
         out.intervals = intervals.forEach(function (t) {
-            var fn = t[timerCallback(t)],
-                callSite = getCallsite(fn);
+            var fn = t[timerCallback(t)];
             return {
                 name: fn.name || fn.__name || '(anonymous)',
                 timeout: t._idleTimeout,
-                callSite: callSite,
+                callSite: getCallsite(fn),
             };
         });
     }
