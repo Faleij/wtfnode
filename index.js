@@ -297,6 +297,7 @@ function getCallsite(thing) {
 
 function dump() {
     var out = {
+        /*
         sockets: [],
         fds: [],
         servers: [],
@@ -305,6 +306,7 @@ function dump() {
         processes: [],
         clusterWorkers: [],
         other: [],
+        */
     };
 
     // sort the active handles into different types for logging
